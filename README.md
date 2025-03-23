@@ -283,7 +283,94 @@ mov [c], eax    ; 存储结果
   * 在无优化场景下，`a + b`比`a + 20`慢几纳秒（取决于缓存命中率）。
   * 在优化场景下，如果`b`在内存中，差距依然存在，但如果`b`在寄存器中，差距消失。
 
+## epoll
+在`Linux`系统中，`epoll`是一种高效的`I/O`事件通知机制，用于处理大量并发连接，特别是在服务器编程中。它解决了传统`select`和`poll`在高并发场景下的性能瓶颈问题。
 
+### 什么是 epoll
+* 定义：`epoll`是`Linux`内核提供的一种可扩展的`I/O`多路复用机制，适用于需要同时监控大量文件描述符（`fd`）的场景
+* 优点：
+  * 高效性：时间复杂度为`O(1)`，不像`select`和`poll`的`O(n)`。
+  * 支持大量连接：可以处理数千甚至数十万的连接，而不会因`fd`数量增加导致性能急剧下降。
+  * 事件驱动：只返回就绪的事件，避免遍历所有`fd`。
+* 适用场景：网络服务器（如`Web`服务器、聊天服务器）处理高并发连接。
 
+### 工作原理
+* `epoll_create`：创建一个`epoll`实例，返回一个文件描述符（`epfd`）。
+* `epoll_ctl`：向`epoll`实例注册或修改文件描述符及其感兴趣的事件（如可读、可写）。
+* `epoll_wait`：等待事件发生，返回就绪的事件集合。
+* 事件模型：
+  * `LT`（`Level Triggered`，水平触发）：默认模式，只要 `fd` 状态未处理完，就会持续通知。
+  * `ET`（`Edge Triggered`，边缘触发）：仅在 `fd` 状态变化时通知一次，要求一次性处理完数据，效率更高但编程复杂。
+
+### 核心函数
+#### epoll_create
+```c++
+int epoll_create(int size);
+```
+* 功能：创建一个 `epoll` 实例。
+* 参数：
+  * `size`：提示内核预期监控的`fd`数量（Linux 2.6.8 后仅为建议值，实际大小动态调整）。
+* 返回值：
+  * 成功：返回`epoll`文件描述符（`epfd`）。
+  * 失败：返回`-1`，设置 `errno`。
+* 注意：`C++11`后推荐用`epoll_create1(0)`（更现代的接口，支持`flags`，如`EPOLL_CLOEXEC`）
+
+#### epoll_ctl
+```c++
+int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event);
+```
+* 功能：控制`epoll`实例，添加、修改或删除监控的`fd`。
+* 参数：
+  * `epfd`：`epoll_create`返回的`epoll`文件描述符。
+  * `op`：操作类型：
+    * `EPOLL_CTL_ADD`：添加`fd`。
+    * `EPOLL_CTL_MOD`：修改`fd`的事件。
+    * `EPOLL_CTL_DEL`：删除`fd`。
+  * `fd`：要监控的文件描述符（如`socket`）。
+  * `event`：指向`struct epoll_event`的指针，定义事件类型。
+* 事件结构
+  ```c++
+  struct epoll_event {
+      uint32_t events;   // 事件类型（如 EPOLLIN EPOLLOUT）
+      epoll_data_t data; // 用户数据
+  };
+  typedef union epoll_data {
+      void *ptr;
+      int fd;
+      uint32_t u32;
+      uint64_t u64;
+  } epoll_data_t; 
+  ```
+  * 常见事件：
+    * `EPOLLIN`：`fd`可读。
+    * `EPOLLOUT`：`fd`可写。
+    * `EPOLLERR`：`fd`发生错误。
+    * `EPOLLET`：启用边缘触发模式。
+* 返回值：
+  * 成功：`0`。
+  * 失败：`-1`，设置`errno`。
+
+#### epoll_wait
+```c++
+int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout);
+```
+* 功能：等待事件发生，返回就绪的`fd`列表。
+* 参数：
+  * `epfd`：`epoll`实例的`fd`。
+  * `events`：用户提供的数组，用于存储就绪事件。
+  * `maxevents`：数组的最大容量。
+  * `timeout`：超时时间（毫秒）：
+    * `-1`：阻塞直到事件发生。
+    * `0`：立即返回。
+* 返回值：
+  * 成功：返回就绪的事件数（`0`表示超时）。
+  * 失败：`-1`，设置`errno`。
+
+### 使用步骤
+* 调用`epoll_create`创建`epoll`实例。
+* 使用`epoll_ctl`注册需要监控的`fd`和事件。
+* 在循环中调用`epoll_wait`等待事件。
+* 处理返回的就绪事件。
+* 使用完后关闭`epfd`和相关`fd`。
 
 
